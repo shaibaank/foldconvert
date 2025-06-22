@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Folder to Text Converter</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Custom styles for the drop zone highlight */
+        .drop-zone-active {
+            background-color: #e0f2fe; /* light-blue-100 */
+            border-color: #0284c7; /* light-blue-600 */
+        }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f5f9; /* slate-100 */
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #94a3b8; /* slate-400 */
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #64748b; /* slate-500 */
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 antialiased">
+    <div class="flex flex-col h-screen max-w-5xl mx-auto p-4 sm:p-6 lg:p-8">
+        <!-- Header -->
+        <header class="pb-6 border-b border-slate-200">
+            <h1 class="text-3xl font-bold text-slate-900">Folder to Text Converter</h1>
+            <p class="mt-2 text-slate-600">Drag and drop a folder to combine all file paths and their contents into a single text block.</p>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-grow min-h-0 py-6">
+            <!-- Drop Zone & Controls -->
+            <div class="flex flex-col space-y-4">
+                <div id="drop-zone" class="flex-grow flex flex-col justify-center items-center p-8 border-2 border-dashed border-slate-300 rounded-lg text-center cursor-pointer transition-colors duration-200 hover:bg-slate-100">
+                    <svg class="w-16 h-16 text-slate-400 mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+                    </svg>
+                    <p class="text-lg font-semibold text-slate-700">Drag & drop a folder here</p>
+                    <p class="text-sm text-slate-500">or click to select a folder</p>
+                    <p id="status" class="mt-4 text-sm text-blue-600 font-medium"></p>
+                </div>
+                 <!-- Fallback for browsers that do not support directory picker -->
+                <input type="file" id="file-picker" webkitdirectory directory multiple style="display: none;" />
+
+                <div class="flex-shrink-0 flex items-center space-x-3">
+                     <button id="copy-button" class="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors" disabled>
+                        Copy to Clipboard
+                    </button>
+                    <button id="clear-button" class="w-full bg-slate-200 text-slate-700 font-bold py-3 px-4 rounded-lg hover:bg-slate-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-400 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors" disabled>
+                        Clear
+                    </button>
+                </div>
+            </div>
+
+            <!-- Output Display -->
+            <div class="bg-white border border-slate-200 rounded-lg shadow-sm flex flex-col min-h-0">
+                <div class="px-4 py-3 border-b border-slate-200">
+                    <h2 class="font-semibold text-slate-800">Generated Output</h2>
+                </div>
+                <div class="flex-grow p-4 overflow-auto">
+                    <pre id="output" class="text-sm text-slate-600 whitespace-pre-wrap break-words"></pre>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Toast Notification -->
+        <div id="toast" class="fixed bottom-5 right-5 bg-green-500 text-white py-2 px-4 rounded-lg shadow-lg opacity-0 transform translate-y-2 transition-all duration-300">
+            Copied to clipboard!
+        </div>
+    </div>
+
+    <script>
+        // DOM element references
+        const dropZone = document.getElementById('drop-zone');
+        const filePicker = document.getElementById('file-picker');
+        const outputElement = document.getElementById('output');
+        const statusElement = document.getElementById('status');
+        const copyButton = document.getElementById('copy-button');
+        const clearButton = document.getElementById('clear-button');
+        const toastElement = document.getElementById('toast');
+
+        let isProcessing = false;
+
+        // --- Drag and Drop Event Handlers ---
+
+        dropZone.addEventListener('dragover', (event) => {
+            event.preventDefault();
+            if (isProcessing) return;
+            dropZone.classList.add('drop-zone-active');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('drop-zone-active');
+        });
+
+        dropZone.addEventListener('drop', async (event) => {
+            event.preventDefault();
+            dropZone.classList.remove('drop-zone-active');
+            if (isProcessing) return;
+
+            const items = event.dataTransfer.items;
+            if (!items || items.length === 0) {
+                return;
+            }
+
+            // `getAsFileSystemHandle` is the modern API for this.
+            const entry = items[0].webkitGetAsEntry ? items[0].webkitGetAsEntry() : (items[0].getAsFileSystemHandle ? await items[0].getAsFileSystemHandle() : null);
+
+            if (entry && entry.isDirectory) {
+                handleDirectoryEntry(entry);
+            } else {
+                statusElement.textContent = 'Please drop a single folder.';
+                setTimeout(() => statusElement.textContent = '', 3000);
+            }
+        });
+        
+        // --- Click to Select Folder ---
+        dropZone.addEventListener('click', () => {
+             if (isProcessing) return;
+             filePicker.click();
+        });
+
+        filePicker.addEventListener('change', (event) => {
+            if (isProcessing) return;
+            const files = event.target.files;
+            if (files.length > 0) {
+                handleFileList(files);
+            }
+        });
+
+
+        // --- Core Logic ---
+
+        /**
+         * Handles processing using the File System Access API (from drag & drop).
+         * @param {FileSystemDirectoryHandle|FileSystemDirectoryEntry} entry - The directory handle/entry.
+         */
+        async function handleDirectoryEntry(entry) {
+            setProcessingState(true);
+            outputElement.textContent = '';
+            const allFileContents = [];
+            
+            try {
+                // The modern getAsFileSystemHandle provides an async iterator
+                if (entry.values) {
+                     await processDirectoryHandle(entry, entry.name, allFileContents);
+                } else { // Fallback for older webkitGetAsEntry
+                     await processDirectoryEntry(entry, allFileContents);
+                }
+               
+                outputElement.textContent = allFileContents.join('\n');
+            } catch (error) {
+                console.error('Error processing folder:', error);
+                statusElement.textContent = 'Error: Could not read folder.';
+            } finally {
+                setProcessingState(false);
+            }
+        }
+        
+        /**
+         * Handles processing using the File input (from click & select).
+         * @param {FileList} files - The list of files from the input.
+         */
+        async function handleFileList(files) {
+            setProcessingState(true);
+            outputElement.textContent = '';
+            const allFileContents = [];
+            const filesArray = Array.from(files);
+
+            // Sort files alphabetically by path
+            filesArray.sort((a, b) => a.webkitRelativePath.localeCompare(b.webkitRelativePath));
+            
+            try {
+                for (const file of filesArray) {
+                    // file.webkitRelativePath is the key for folder structure
+                    const path = file.webkitRelativePath || file.name;
+                    statusElement.textContent = `Processing: ${path}`;
+                    const content = await file.text();
+                    // UPDATED FORMAT
+                    const formattedContent = `${path} (${content})`;
+                    allFileContents.push(formattedContent);
+                }
+                outputElement.textContent = allFileContents.join('\n');
+            } catch (error) {
+                console.error('Error processing files:', error);
+                statusElement.textContent = 'Error: Could not read some files.';
+            } finally {
+                 setProcessingState(false);
+            }
+        }
+
+
+        /**
+         * Recursively processes a directory using the FileSystemDirectoryHandle API.
+         * @param {FileSystemDirectoryHandle} dirHandle - The handle for the directory.
+         * @param {string} path - The current path relative to the root.
+         * @param {string[]} allFileContents - The array to push results into.
+         */
+        async function processDirectoryHandle(dirHandle, path, allFileContents) {
+            const entries = [];
+            for await (const entry of dirHandle.values()) {
+                entries.push(entry);
+            }
+
+            // Sort entries: directories first, then files, all alphabetically
+            entries.sort((a, b) => {
+                if (a.kind !== b.kind) {
+                    return a.kind === 'directory' ? -1 : 1;
+                }
+                return a.name.localeCompare(b.name);
+            });
+
+            for (const entry of entries) {
+                const currentPath = `${path}/${entry.name}`;
+                if (entry.kind === 'file') {
+                    statusElement.textContent = `Processing: ${currentPath}`;
+                    const file = await entry.getFile();
+                    const content = await file.text();
+                    // UPDATED FORMAT
+                    const formattedContent = `${currentPath} (${content})`;
+                    allFileContents.push(formattedContent);
+                } else if (entry.kind === 'directory') {
+                    await processDirectoryHandle(entry, currentPath, allFileContents);
+                }
+            }
+        }
+        
+        /**
+         * Recursively processes a directory using the legacy FileSystemDirectoryEntry API.
+         * @param {FileSystemDirectoryEntry} dirEntry - The entry for the directory.
+         * @param {string[]} allFileContents - The array to push results into.
+         */
+        function processDirectoryEntry(dirEntry, allFileContents) {
+            return new Promise((resolve, reject) => {
+                const dirReader = dirEntry.createReader();
+                let allEntries = [];
+
+                const readEntries = () => {
+                    dirReader.readEntries(entries => {
+                        if (entries.length === 0) {
+                            // Sort entries: directories first, then files, all alphabetically
+                            allEntries.sort((a, b) => {
+                                if (a.isDirectory !== b.isDirectory) {
+                                    return a.isDirectory ? -1 : 1;
+                                }
+                                return a.name.localeCompare(b.name);
+                            });
+
+                            // Process all collected entries sequentially
+                            (async () => {
+                                for (const entry of allEntries) {
+                                    await processEntry(entry, allFileContents);
+                                }
+                                resolve();
+                            })().catch(reject);
+                            return;
+                        }
+                        allEntries = allEntries.concat(entries);
+                        readEntries(); // Read next batch
+                    }, reject);
+                };
+                readEntries();
+            });
+        }
+        
+        /**
+         * Helper for processDirectoryEntry to handle individual entries.
+         */
+        function processEntry(entry, allFileContents) {
+            return new Promise((resolve, reject) => {
+                if (entry.isFile) {
+                     // Get the full path, remove leading slash if it exists
+                    const path = entry.fullPath.startsWith('/') ? entry.fullPath.substring(1) : entry.fullPath;
+                    statusElement.textContent = `Processing: ${path}`;
+                    entry.file(file => {
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                            // UPDATED FORMAT
+                            const formattedContent = `${path} (${reader.result})`;
+                            allFileContents.push(formattedContent);
+                            resolve();
+                        };
+                        reader.onerror = reject;
+                        reader.readAsText(file);
+                    }, reject);
+                } else if (entry.isDirectory) {
+                    processDirectoryEntry(entry, allFileContents).then(resolve).catch(reject);
+                } else {
+                    resolve(); // Skip other entry types
+                }
+            });
+        }
+
+        /**
+         * Manages the UI state (loading vs. idle).
+         * @param {boolean} processing - Whether processing is active.
+         */
+        function setProcessingState(processing) {
+            isProcessing = processing;
+            if (processing) {
+                statusElement.textContent = 'Processing folder...';
+                copyButton.disabled = true;
+                clearButton.disabled = true;
+            } else {
+                statusElement.textContent = 'Processing complete!';
+                const hasContent = outputElement.textContent.length > 0;
+                copyButton.disabled = !hasContent;
+                clearButton.disabled = !hasContent;
+                setTimeout(() => {
+                    if (statusElement.textContent === 'Processing complete!') {
+                       statusElement.textContent = '';
+                    }
+                }, 3000);
+            }
+        }
+
+        // --- Button Actions ---
+
+        clearButton.addEventListener('click', () => {
+            outputElement.textContent = '';
+            filePicker.value = ''; // Reset file input
+            setProcessingState(false);
+            statusElement.textContent = '';
+        });
+
+        copyButton.addEventListener('click', () => {
+            const textToCopy = outputElement.textContent;
+            if (!textToCopy) return;
+
+            // Use a temporary textarea to preserve formatting and handle large text
+            const textArea = document.createElement('textarea');
+            textArea.value = textToCopy;
+            textArea.style.position = 'fixed';
+            textArea.style.left = '-9999px';
+            document.body.appendChild(textArea);
+            textArea.select();
+            
+            try {
+                // Use execCommand as a robust fallback for iFrame environments
+                const successful = document.execCommand('copy');
+                if (successful) {
+                    showToast('Copied to clipboard!');
+                } else {
+                    // For modern browsers, try Clipboard API if execCommand fails
+                    navigator.clipboard.writeText(textToCopy).then(() => {
+                        showToast('Copied to clipboard!');
+                    }).catch(err => {
+                         showToast('Copy failed. Please try manually.', true);
+                         console.error('Clipboard copy failed:', err);
+                    });
+                }
+            } catch (err) {
+                showToast('Copy failed. Please try manually.', true);
+                console.error('Clipboard copy failed:', err);
+            }
+
+            document.body.removeChild(textArea);
+        });
+
+        /**
+         * Displays a toast notification.
+         * @param {string} message - The message to show.
+         * @param {boolean} isError - If true, shows an error-styled toast.
+         */
+        function showToast(message, isError = false) {
+            toastElement.textContent = message;
+            toastElement.className = toastElement.className.replace(/bg-\w+-\d+/, isError ? 'bg-red-500' : 'bg-green-500');
+            toastElement.style.opacity = '1';
+            toastElement.style.transform = 'translateY(0)';
+
+            setTimeout(() => {
+                toastElement.style.opacity = '0';
+                toastElement.style.transform = 'translateY(0.5rem)';
+            }, 3000);
+        }
+    </script>
+</body>
+</html>
